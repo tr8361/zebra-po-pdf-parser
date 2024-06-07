@@ -39,17 +39,15 @@ def document_load_and_parse(temp_pdf_path,prompt,client):
     print(document[0].page_content)
     document_query =  """Extract the values of PO Number, Ship To address, Ship Via method, PC Number and part Numbers.
     Please note that PO can also be mentioned as Purchase Contract as well, in that case consider PO number as the number mentioned.
-    Extract PO number as only a numeric Value excluding any trailing and leading alphabets and symbols. 
-    Example 1: 'PO-12345' should be extracted as '12345' withount any alphabets and symbols.
-    Example 2: 'PO0012-345' should be extracted as '0012345' withount any alphabets and symbols.
-    Example 3: 'FG00131572' should be extracted as '00131572' withount any prefix alphabets.
     PC numbers will be mentioned as PC Number. Please note that some documents 
     might not have a PC Number mentioned, in that case assign value as PC number not Found.
     Please note that some documents might not have The Ship Via method mention, 
-    in that  case assign value as Freight Method Not Found.
-    Please note that if in the part/description table, a number/alphanumeric number is mentioned after the term Zebra, consider ONLY that to be the actual Part Number otherwise consider Part Numbers to be only alphabets/alphanumeric without any spaces inside the Item/description table.
+    in that  case assign value as 'Ship Via/Freight Method Not Found'.
+    Please note that if in the part/description table, a number/alphanumeric number is mentioned after the term Zebra, consider ONLY that to be the actual Part Number otherwise consider Part Numbers to be only alphabets/alphanumeric without any spaces inside the Item/description table only.
     Please note that multiple Part Numbers might also be mentioned in the table with column as 'SCHEDULE OF SUPPLIES AND SERVICES, in that case extract only those the part numbers.
-    Please note Part numbers """+ document[0].page_content
+    Special cases to extract Part Numbers/Item number: Part numbers are a single alphanumeric number with hyphens in between and no spaces. 
+                                                     Sometimes the part number maybe printed on the pdf in seperate lines with a hyphen-, in those cases, the entire alphanumeric number is the Part number.
+    """+ document[0].page_content
 
     prompt_format = prompt.format_prompt(question = document_query)
     result = client.invoke(prompt_format.to_messages())
@@ -62,6 +60,7 @@ def validateParsedValuesWithDatabase(username,password,dsn,parsed):
     
     logging.info("Document Validation starts.......")
     global connection
+    remarks = []
     try:        
         cx_Oracle.init_oracle_client(lib_dir= r"C:\\Oracle19c-64bit\\product\\client_1\\bin\\")
         connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
@@ -69,6 +68,7 @@ def validateParsedValuesWithDatabase(username,password,dsn,parsed):
 
     except cx_Oracle.DatabaseError as e:
         logging.info(f"Error connecting to the database: {e}")
+        connection.close()
 
     logging.info(f"Connected to Oracle Database version: {connection.version}")
     cursor = connection.cursor()
@@ -90,65 +90,92 @@ def validateParsedValuesWithDatabase(username,password,dsn,parsed):
 
 
     comparePONumber = cursor.execute(po_no_validate,value = parsed.po_number)
-    if cursor.fetchone() is None:
-        logging.info(f"PO number {parsed.po_number} is not Valid")
-        remarks.append(f"PO number {parsed.po_number} is not Valid")
+    cursor_fetchone = cursor.fetchone()
+    if cursor_fetchone is None:
+        print(f"PO number: {parsed.po_number} is new & should be processed further")
+        remarks.append(f"PO number {parsed.po_number} is new and should be processed further.")
     else:
-        logging.info(f"PO number {parsed.po_number} is Valid")
+        print(f"PO number {parsed.po_number} already exists.")
 
-        # Bestway--- then no need to valid; Other than BestWay
-    # compareFreightAccountNumber = cursor.execute(freight_account_number_validate,value = parsed.freight_acc_no)
-    # if cursor.fetchone() is None:
-    #     logging.info(f"Freight account number {parsed.freight_acc_no} is NOt Valid")
-    #     remarks.append(f"Freight account number {parsed.freight_acc_no} is NOt Valid")
-    # else:
-    #     logging.info(f"Freight account number {parsed.freight_acc_no} is Valid")
-    
+
+    if "BESTWAY" in parsed.freight_acc_no or "PREPAY & ADD" in parsed.freight_acc_no:
+        print(f"No Validation needed for Freight account number: {parsed.freight_acc_no}")
+        remarks.append("No Validation needed for Freight account number")
+    elif parsed.freight_acc_no == 'Ship Via/Freight Method Not Found':
+        print(f"Freight Account Number not found")
+        remarks.append("Freight Account Number not found") #freight acc number not found [Prepay & add, then ignore Freight validation]
+    else:
+        print(f"Freight Account Number is: {parsed.freight_acc_no}")
 
     comparePcNumber = cursor.execute(expired_pc,value = parsed.pc_no)
     cursor_fetchone_pc = cursor.fetchone()
-    try:
-        if cursor_fetchone_pc is not None:
-            if datetime.now() > cursor.fetchone()[0]: 
-                logging.info(f"PC number {parsed.pc_no} is expired")
-                remarks.append(f"PC number {parsed.pc_no} is expired")
-            else:
-                print(f"PC number {parsed.pc_no} is not expired")    
+    try: 
+        if datetime.now() > cursor_fetchone_pc[0]: 
+            print(f"PC number {parsed.pc_no} is expired")
+            remarks.append(f"PC number {parsed.pc_no} is expired")
+        else:
+            print(f"PC number {parsed.pc_no} is not expired")
+        
     except Exception as e:
-        logging.info(f"{e} : Pc Expired Date is not found in Database")
+        print(f"{e} :Pc Expired Date is not found in Database")
         remarks.append(f"Pc Expired Date is not found in Database")
 
     print(remarks)
     cursor.close()
     connection.close()
     logging.info("DB Validation is done....")
+    return remarks
 
 
-def create_excel_file(file_path,parsed):
+def create_excel_file(file_path,parsed,remarks):
     logging.info("Creating Excel File with the Validation Errors Info.....")
     dict_data1 = parsed.dict()
     print(dict_data1)
+    combined_part_numbers=','.join(parsed.part_numbers)
     combined_remarks = ','.join(remarks)
 
     if os.path.exists(file_path):
         print(f"The file {file_path} already exists.")
-        df = pd.read_excel(open(file_path, 'rb'))
-
-        #df.loc[len(df)] = dict_data1.values()
-        df = df._append(dict_data1, ignore_index=True)
-        df['Remarks'] = combined_remarks
+        df = pd.read_excel(file_path)
+        new_row = dict_data1.copy()
+        new_row['Remarks'] = combined_remarks
+        new_row['Sl. No.'] = len(df) + 1
+        df = df._append(new_row, ignore_index=True)
         df.to_excel(file_path, index=False)
-        print(f"The DataFrame has been updated to {file_path}.")
+        print(f"The DataFrame has been updated to {file_path}. ")
 
     else:
         data1 = pd.DataFrame(dict_data1)
         data1['Remarks'] = combined_remarks
-        #data1.rename(columns={'po_no': 'PO Number', 'ship_to': 'Ship To', 'freight_acc_no':'Freight Account Number','pc_no':'PC Number', 'part_numbers':'Part Numbers'}, inplace=True)
+        data1['part_numbers'] = combined_part_numbers
         data1.insert(0, 'Sl. No.', range(1, 1 + len(data1)))
-        print("printing data1.....")
+        print("printing data1..... ")
         print(data1)
         data1.to_excel(file_path, index=False)
         print(f"New DataFrame has been saved to {file_path}.")
+
+# def create_excel_file(file_path,parsed):
+#     logging.info("Creating Excel File with the Validation Errors Info.....")
+#     dict_data1 = parsed.dict()
+#     print(dict_data1)
+#     combined_remarks = ','.join(remarks)
+
+#     if os.path.exists(file_path):
+#         print(f"The file {file_path} already exists.")
+#         df = pd.read_excel(open(file_path, 'rb'))
+#         df = df._append(dict_data1, ignore_index=True)
+#         df['Remarks'] = combined_remarks
+#         df.to_excel(file_path, index=False)
+#         print(f"The DataFrame has been updated to {file_path}.")
+
+#     else:
+#         data1 = pd.DataFrame(dict_data1)
+#         data1['Remarks'] = combined_remarks
+#         data1.insert(0, 'Sl. No.', range(1, 1 + len(data1)))
+#         print("printing data1.....")
+#         print(data1)
+#         data1.to_excel(file_path, index=False)
+#         print(f"New DataFrame has been saved to {file_path}.")
 
     
 def upload_excel_blob(account_name, account_key, container_name, local_file_path, upload_excel_blob_name):
@@ -180,8 +207,6 @@ def blob_trigger1(myblob: func.InputStream):
                 f"Name: {myblob.name}"
                 f"Blob Size: {myblob.length} bytes")
     # Replace with your actual connection string and blob/container names
-    global remarks
-    remarks = []
     connection_string = os.environ.get("CONNECTION_STRING")
     container_name = "po-container"
     blob_name = myblob.name.split("/")[1]
@@ -246,9 +271,8 @@ def blob_trigger1(myblob: func.InputStream):
 
         logging.info("Document Parsing starts......")
         parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
-        
-        validateParsedValuesWithDatabase(username,password,dsn,parsed_return_value)
-        create_excel_file(local_excel_file_path,parsed_return_value)
+        remarks_list = validateParsedValuesWithDatabase(username,password,dsn,parsed_return_value)
+        create_excel_file(local_excel_file_path,parsed_return_value,remarks_list)
         upload_excel_blob(storage_acc_name, azure_account_key, container_name, local_excel_file_path, upload_excel_blob_name)
 
     else:
