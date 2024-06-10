@@ -63,6 +63,11 @@ jobs:
       - name: Unzip artifact for deployment
         run: unzip release.zip     
         
+      # - name: Run a one-line script
+      #   run: echo Hello, world!
+      #   env:
+      #     SUPER_SECRET: ${{ secrets.SUPER_SECRET }}
+
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
         id: deploy-to-function
