@@ -37,16 +37,15 @@ def document_load_and_parse(temp_pdf_path,prompt,client):
     loader = PyPDFLoader(temp_pdf_path)
     document = loader.load()
     print(document[0].page_content)
+
     document_query =  """Extract the values of PO Number, Ship To address, Ship Via method, PC Number and part Numbers.
     Please note that PO can also be mentioned as Purchase Contract as well, in that case consider PO number as the number mentioned.
     PC numbers will be mentioned as PC Number. Please note that some documents 
-    might not have a PC Number mentioned, in that case assign value as PC number not Found.
+    might not have a PC Number mentioned, in that case assign value as 'PC number not Found'.
     Please note that some documents might not have The Ship Via method mention, 
-    in that  case assign value as 'Ship Via/Freight Method Not Found'.
-    Please note that if in the part/description table, a number/alphanumeric number is mentioned after the term Zebra, consider ONLY that to be the actual Part Number otherwise consider Part Numbers to be only alphabets/alphanumeric without any spaces inside the Item/description table only.
-    Please note that multiple Part Numbers might also be mentioned in the table with column as 'SCHEDULE OF SUPPLIES AND SERVICES, in that case extract only those the part numbers.
-    Special cases to extract Part Numbers/Item number: Part numbers are a single alphanumeric number with hyphens in between and no spaces. 
-                                                     Sometimes the part number maybe printed on the pdf in seperate lines with a hyphen-, in those cases, the entire alphanumeric number is the Part number.
+    in that  case assign value as Freight Method Not Found.
+    Please note that if in the part/description table, a number/alphanumeric number is mentioned after the term 'Zebra', consider ONLY that number to be the actual Part Number,excluding any other number.
+    
     """+ document[0].page_content
 
     prompt_format = prompt.format_prompt(question = document_query)
@@ -98,7 +97,7 @@ def validateParsedValuesWithDatabase(username,password,dsn,parsed):
         print(f"PO number {parsed.po_number} already exists.")
 
 
-    if "BESTWAY" in parsed.freight_acc_no or "PREPAY & ADD" in parsed.freight_acc_no:
+    if "BESTWAY" in parsed.freight_acc_no or "Prepay & Add" in parsed.freight_acc_no:
         print(f"No Validation needed for Freight account number: {parsed.freight_acc_no}")
         remarks.append("No Validation needed for Freight account number")
     elif parsed.freight_acc_no == 'Ship Via/Freight Method Not Found':
@@ -154,30 +153,6 @@ def create_excel_file(file_path,parsed,remarks):
         data1.to_excel(file_path, index=False)
         print(f"New DataFrame has been saved to {file_path}.")
 
-# def create_excel_file(file_path,parsed):
-#     logging.info("Creating Excel File with the Validation Errors Info.....")
-#     dict_data1 = parsed.dict()
-#     print(dict_data1)
-#     combined_remarks = ','.join(remarks)
-
-#     if os.path.exists(file_path):
-#         print(f"The file {file_path} already exists.")
-#         df = pd.read_excel(open(file_path, 'rb'))
-#         df = df._append(dict_data1, ignore_index=True)
-#         df['Remarks'] = combined_remarks
-#         df.to_excel(file_path, index=False)
-#         print(f"The DataFrame has been updated to {file_path}.")
-
-#     else:
-#         data1 = pd.DataFrame(dict_data1)
-#         data1['Remarks'] = combined_remarks
-#         data1.insert(0, 'Sl. No.', range(1, 1 + len(data1)))
-#         print("printing data1.....")
-#         print(data1)
-#         data1.to_excel(file_path, index=False)
-#         print(f"New DataFrame has been saved to {file_path}.")
-
-    
 def upload_excel_blob(account_name, account_key, container_name, local_file_path, upload_excel_blob_name):
     logging.info("Uploading error Excel to the Blob.....")
     try:
@@ -207,11 +182,11 @@ def blob_trigger1(myblob: func.InputStream):
                 f"Name: {myblob.name}"
                 f"Blob Size: {myblob.length} bytes")
     # Replace with your actual connection string and blob/container names
-    connection_string = os.environ.get("CONNECTION_STRING")
-    container_name = "po-container"
+    connection_string = os.environ.get("STORAGE_ACCOUNT_CONNECTION_STRING")
+    container_name = os.environ.get("CONTAINER_NAME")
     blob_name = myblob.name.split("/")[1]
     storage_acc_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
-    azure_account_key = os.environ.get("AZURE_ACCOUNT_KEY")
+    storage_account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
     username = config.username
     password = config.password
     local_excel_file_path = r"C:\Users\TR8361\my_env\sample_excel.xlsx"
@@ -222,7 +197,6 @@ def blob_trigger1(myblob: func.InputStream):
         port=config.port,
         service_name = config.service_name
     )
-
 
     prompt = ChatPromptTemplate(
     messages=[
@@ -273,13 +247,12 @@ def blob_trigger1(myblob: func.InputStream):
         parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
         remarks_list = validateParsedValuesWithDatabase(username,password,dsn,parsed_return_value)
         create_excel_file(local_excel_file_path,parsed_return_value,remarks_list)
-        upload_excel_blob(storage_acc_name, azure_account_key, container_name, local_excel_file_path, upload_excel_blob_name)
+        upload_excel_blob(storage_acc_name, storage_account_key, container_name, local_excel_file_path, upload_excel_blob_name)
 
     else:
         logging(f"Blob '{blob_name}' does not exist.")
 
     
-
 
 
     
