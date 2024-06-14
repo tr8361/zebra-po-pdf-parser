@@ -14,11 +14,13 @@ import pandas as pd
 import openpyxl
 from azure.storage.blob import BlobServiceClient
 from langchain_community.document_loaders import PyPDFLoader
+import pypdf
 from langchain_core.prompts import ChatPromptTemplate,HumanMessagePromptTemplate
 from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel,Field
 from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -114,8 +116,16 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
         print(f"Freight Account Number not found")
         remarks.append("Freight Account Number not found") 
     else:
-        #print(f"Freight Account Number is: {parsed.freight_acc_no}")
-        print(f"Freight Account Number not found")
+        freight_method = re.findall("\D", parsed.freight_acc_no)#contains No Digits
+        freight_account_number = re.findall("\d",  parsed.freight_acc_no)#contains only digits
+        print(''.join(freight_method))
+        print("Printing freight account number ........:"+''.join(freight_account_number))
+
+        if  freight_method and not freight_account_number:
+            remarks.append(f"Freight account number is missing for Freight method - {''.join(freight_method)}")
+            print(f"Freight account number is missing for {''.join(freight_method)}")
+        else:
+            print(f"Freight Account Number is present")
 
     comparePcNumber = cursor.execute(expired_pc,value = parsed.pc_no)
     cursor_fetchone_pc = cursor.fetchone()
