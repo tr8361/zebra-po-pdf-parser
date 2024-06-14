@@ -8,7 +8,7 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
 import config
 import cx_Oracle
-from datetime import datetime
+from datetime import datetime,date
 from typing import List
 import pandas as pd
 import openpyxl
@@ -44,7 +44,11 @@ def document_load_and_parse(temp_pdf_path,prompt,client):
     might not have a PC Number mentioned, in that case assign value as 'PC number not Found'.
     Please note that some documents might not have The Ship Via method mention, 
     in that  case assign value as Freight Method Not Found.
-    Please note that if in the part/description table, a number/alphanumeric number is mentioned after the term 'Zebra', consider ONLY that number to be the actual Part Number,excluding any other number.
+    While extracting Part Numbers,if part number is mentioned after the term 'Zebra', consider ONLY that preceeding string to be the actual Part Number.
+    Part numbers format examples: 
+    521-678 (Not an actual part number)
+    SE2707-LU000R (Actual Part Number format)
+    AFT-SYG-FGH (Actual Part Number format)
     Special cases to extract Part Numbers/Item number:
     For example, the actual part number is ABC-2HG3-IOX but the part of the string can be present as ABC-2HG3- in the first line and rest IOX in the immediate next line.
        In that case, consider the whole string as the part number without separating it as two part numbers. 
@@ -110,7 +114,8 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
         print(f"Freight Account Number not found")
         remarks.append("Freight Account Number not found") 
     else:
-        print(f"Freight Account Number is: {parsed.freight_acc_no}")
+        #print(f"Freight Account Number is: {parsed.freight_acc_no}")
+        print(f"Freight Account Number not found")
 
     comparePcNumber = cursor.execute(expired_pc,value = parsed.pc_no)
     cursor_fetchone_pc = cursor.fetchone()
@@ -136,7 +141,10 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
     logging.info("Creating Excel File with the Validation Errors Info.....")
     dict_data1 = parsed.dict()
     print(dict_data1)
+    
     combined_part_numbers=','.join(parsed.part_numbers)
+    dict_data1['part_numbers']=combined_part_numbers
+    logging.info(f"dict_data1...updated,,,:{dict_data1}")
     combined_remarks = ','.join(remarks)
     blob_client = blob_service_client.get_blob_client(container_name,upload_excel_blob_name)
     logging.info(f"blob client :{blob_client}")
@@ -158,9 +166,8 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
         logging.info(f"The DataFrame has been updated to {xlsx_data}. ")
 
     else:
-        data1 = pd.DataFrame(dict_data1)
+        data1 = pd.DataFrame(dict_data1,index=[0])
         data1['Remarks'] = combined_remarks
-        data1['part_numbers'] = combined_part_numbers
         data1.insert(0, 'Sl. No.', range(1, 1 + len(data1)))
         print("printing data1..... ")
         print(data1)
@@ -208,7 +215,7 @@ def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
     message.attachment = attachedFile
     try:
         sg = SendGridAPIClient(api_key=API)
-        print("sendgrid")
+        print("sendgrid: email sent to user.")
         response = sg.send(message)
         logging.info(f"Mail Response: {response}")
         logging.info(f"Email sent! Status code: {response.status_code}")
@@ -234,10 +241,9 @@ def BlobTrigger1(myblob: func.InputStream):
     storage_account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
     username = config.username
     password = config.password
-    upload_excel_blob_name = "status_excel.xlsx"
+    upload_excel_blob_name = "status_excel_"+str(date.today())+".xlsx"
     sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
     
-
 
     dsn = cx_Oracle.makedsn(
         host=config.host,
@@ -301,4 +307,4 @@ def BlobTrigger1(myblob: func.InputStream):
         send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
     else:
         logging(f"Blob '{blob_name}' does not exist.")
-
+        
