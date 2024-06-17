@@ -14,7 +14,6 @@ import pandas as pd
 import openpyxl
 from azure.storage.blob import BlobServiceClient
 from langchain_community.document_loaders import PyPDFLoader
-import pypdf
 from langchain_core.prompts import ChatPromptTemplate,HumanMessagePromptTemplate
 from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel,Field
@@ -73,7 +72,7 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     flag = False
     try:        
         if not flag:
-            cx_Oracle.init_oracle_client(lib_dir= r"C:\\Oracle19c-64bit\\product\\client_1\\bin\\")
+            #cx_Oracle.init_oracle_client(lib_dir= r"C:\\Oracle19c-64bit\\product\\client_1\\bin\\")
             connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
             logging.info(f"\nConnected successfully!")
             flag = True
@@ -240,81 +239,85 @@ app = func.FunctionApp()
 @app.blob_trigger(arg_name="myblob", path="po-container/{name}.pdf",
                                connection="AzureWebJobsStorage") 
 def BlobTrigger1(myblob: func.InputStream):
-    logging.info(f"Python blob trigger function processed blob"
-                f"Blob Name: {myblob.name}"
-                f"Blob Size: {myblob.length} bytes")
-    
-    connection_string = os.environ.get("STORAGE_ACCOUNT_CONNECTION_STRING")
-    container_name = os.environ.get("CONTAINER_NAME")
-    blob_name = myblob.name.split("/")[1]
-    storage_acc_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
-    storage_account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
-    username = config.username
-    password = config.password
-    upload_excel_blob_name = "status_excel_"+str(date.today())+".xlsx"
-    sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
-    
+    try:
 
-    dsn = cx_Oracle.makedsn(
-        host=config.host,
-        port=config.port,
-        service_name = config.service_name
-    )
+        logging.info(f"Python blob trigger function processed blob"
+                    f"Blob Name: {myblob.name}"
+                    f"Blob Size: {myblob.length} bytes")
 
-    prompt = ChatPromptTemplate(
-    messages=[
-        HumanMessagePromptTemplate.from_template("answer the user questions as best as possible.\n{format_instructions}\n{question}"
+        connection_string = os.environ.get("STORAGE_ACCOUNT_CONNECTION_STRING")
+        container_name = os.environ.get("CONTAINER_NAME")
+        blob_name = myblob.name.split("/")[1]
+        storage_acc_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
+        storage_account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
+        username = config.username
+        password = config.password
+        upload_excel_blob_name = "status_excel_"+str(date.today())+".xlsx"
+        sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
+
+
+        dsn = cx_Oracle.makedsn(
+            host=config.host,
+            port=config.port,
+            service_name = config.service_name
         )
-    ],
-    input_variables=["question"],
-    partial_variables={
-        "format_instructions": parser.get_format_instructions(),
-    },
-    )
 
-    client = AzureChatOpenAI(
-    model='gpt-4',
-    azure_deployment="chat-endpoint",
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY"),
-    api_version = os.environ.get("OPENAI_API_VERSION")
-    )
+        prompt = ChatPromptTemplate(
+        messages=[
+            HumanMessagePromptTemplate.from_template("answer the user questions as best as possible.\n{format_instructions}\n{question}"
+            )
+        ],
+        input_variables=["question"],
+        partial_variables={
+            "format_instructions": parser.get_format_instructions(),
+        },
+        )
 
-
-    # Create a BlobServiceClient
-    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-
-    # Get a BlobClient for your blob
-    blob_client = blob_service_client.get_blob_client(container_name,blob_name)
-
-    if blob_client.exists():
-        blob_url = blob_client.url
-        logging.info(f"Blob URL: {blob_url}")
-    else:
-        logging.info(f"Blob '{blob_name}' does not exist.")
+        client = AzureChatOpenAI(
+        model='gpt-4',
+        azure_deployment="chat-endpoint",
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY"),
+        api_version = os.environ.get("OPENAI_API_VERSION")
+        )
 
 
+        # Create a BlobServiceClient
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
 
-    if blob_client.exists():
-        logging.info(f"Blob '{blob_name}' exist.")
-        pdf_data = blob_client.download_blob().readall()
+        # Get a BlobClient for your blob
+        blob_client = blob_service_client.get_blob_client(container_name,blob_name)
 
-        pdf_bytesio = io.BytesIO(pdf_data)
+        if blob_client.exists():
+            blob_url = blob_client.url
+            logging.info(f"Blob URL: {blob_url}")
+        else:
+            logging.info(f"Blob '{blob_name}' does not exist.")
 
-        # Create a temp folder and save the BytesIO object
-        temp_dir = tempfile.mkdtemp()
-        temp_pdf_path = os.path.join(temp_dir, 'temp.pdf')
-        with open(temp_pdf_path, 'wb') as temp_file:
-            temp_file.write(pdf_bytesio.getbuffer())
 
-        
-        logging.info("Document Parsing starts......")
-        parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
-        remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
-        xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
-        logging.info("uploading excel to blb container starts.....")
-        upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
-        logging.info("sending mail alert ....")
-        send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
-    else:
-        logging(f"Blob '{blob_name}' does not exist.")
+
+        if blob_client.exists():
+            logging.info(f"Blob '{blob_name}' exist.")
+            pdf_data = blob_client.download_blob().readall()
+
+            pdf_bytesio = io.BytesIO(pdf_data)
+
+            # Create a temp folder and save the BytesIO object
+            temp_dir = tempfile.mkdtemp()
+            temp_pdf_path = os.path.join(temp_dir, 'temp.pdf')
+            with open(temp_pdf_path, 'wb') as temp_file:
+                temp_file.write(pdf_bytesio.getbuffer())
+
+            
+            logging.info("Document Parsing starts......")
+            parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
+            remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
+            xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
+            logging.info("uploading excel to blb container starts.....")
+            upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
+            logging.info("sending mail alert ....")
+            send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
+        else:
+            logging(f"Blob '{blob_name}' does not exist.")
+    except Exception as e:
+        logging.info(f"Error in code as :{e}")
         
