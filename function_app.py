@@ -4,8 +4,8 @@ import os
 import tempfile
 import io
 import base64
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
+#from sendgrid import SendGridAPIClient
+#from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
 #import config
 import cx_Oracle
 from datetime import datetime,date
@@ -215,35 +215,35 @@ def upload_excel_blob(blob_service_client,container_name, xlsx_data, upload_exce
     except Exception as e:
         logging.info(f"Error uploading {upload_excel_blob_name}: {e}")
 
-def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
+# def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
 
-    message = Mail(
-        from_email = os.environ.get("FROM"),
-        to_emails = os.environ.get("TO"),
-        subject = "ZEBRA OM GENAI PO Parser Alert Email",
-        html_content = "Alert Mail with Excel Sheet is sent Successfully!" 
-    )
+#     message = Mail(
+#         from_email = os.environ.get("FROM"),
+#         to_emails = os.environ.get("TO"),
+#         subject = "ZEBRA OM GENAI PO Parser Alert Email",
+#         html_content = "Alert Mail with Excel Sheet is sent Successfully!" 
+#     )
     
-    encoded_file = base64.b64encode(xlsx_data).decode()
+#     encoded_file = base64.b64encode(xlsx_data).decode()
 
-    attachedFile = Attachment(
-        FileContent(encoded_file),
-        FileName(upload_excel_blob_name),
-        FileType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-        Disposition('attachment')
-    )
-    message.attachment = attachedFile
-    try:
-        sg = SendGridAPIClient(api_key=API)
-        print("sendgrid: email sent to user.")
-        response = sg.send(message)
-        logging.info(f"Mail Response: {response}")
-        logging.info(f"Email sent! Status code: {response.status_code}")
-        logging.info(response.body)
-        logging.info(response.headers)
-    except Exception as e:
-        print(f"Exception{e}")
-    logging.info("email sent status")
+#     attachedFile = Attachment(
+#         FileContent(encoded_file),
+#         FileName(upload_excel_blob_name),
+#         FileType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+#         Disposition('attachment')
+#     )
+#     message.attachment = attachedFile
+#     try:
+#         sg = SendGridAPIClient(api_key=API)
+#         print("sendgrid: email sent to user.")
+#         response = sg.send(message)
+#         logging.info(f"Mail Response: {response}")
+#         logging.info(f"Email sent! Status code: {response.status_code}")
+#         logging.info(response.body)
+#         logging.info(response.headers)
+#     except Exception as e:
+#         print(f"Exception{e}")
+#     logging.info("email sent status")
 
 app = func.FunctionApp()
 
@@ -326,7 +326,7 @@ def BlobTrigger1(myblob: func.InputStream):
             logging.info("uploading excel to blb container starts.....")
             upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
             logging.info("sending mail alert ....")
-            send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
+            #send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
         else:
             logging(f"Blob '{blob_name}' does not exist.")
     except Exception as e:
