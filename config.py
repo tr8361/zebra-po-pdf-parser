@@ -1,7 +1,3 @@
-#config.py
-#database configuration details
-#username = 'apps'
-#password = 'dev1228'
 
 username = 'vcherukuri'
 password = 'Welcome1'
