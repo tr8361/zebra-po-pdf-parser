@@ -20,8 +20,9 @@ from pydantic import BaseModel,Field
 from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 import re
+import sys
 
-load_dotenv()
+load_dotenv(override=True)
 
 class PurchaseOrder(BaseModel):
     po_number: str = Field(description="Purchase Order Number")
@@ -73,6 +74,16 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     try:        
         if not flag:
             #cx_Oracle.init_oracle_client(lib_dir= r"C:\\Oracle19c-64bit\\product\\client_1\\bin\\")
+            #for Linux
+            instant_client_dir = None
+
+            if sys.platform.startswith("win"):
+                instant_client_dir = r"C:\\Oracle19c-64bit\\product\\client_1\\bin\\"
+
+            # This can be called at most once per process.
+            if instant_client_dir is not None:
+                cx_Oracle.init_oracle_client(lib_dir=instant_client_dir)
+
             connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
             logging.info(f"\nConnected successfully!")
             flag = True
@@ -250,16 +261,16 @@ def BlobTrigger1(myblob: func.InputStream):
         blob_name = myblob.name.split("/")[1]
         storage_acc_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
         storage_account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
-        username = config.username
-        password = config.password
+        username = os.environ.get("username")
+        password = os.environ.get("password")
         upload_excel_blob_name = "status_excel_"+str(date.today())+".xlsx"
         sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
 
 
         dsn = cx_Oracle.makedsn(
-            host=config.host,
-            port=config.port,
-            service_name = config.service_name
+            host=os.environ.get("host"),
+            port=os.environ.get("port"),
+            service_name = os.environ.get("service_name")
         )
 
         prompt = ChatPromptTemplate(
