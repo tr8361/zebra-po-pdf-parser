@@ -6,12 +6,12 @@ import io
 import base64
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
-import config
+#import config
 import cx_Oracle
 from datetime import datetime,date
 from typing import List
 import pandas as pd
-import openpyxl
+#import openpyxl
 from azure.storage.blob import BlobServiceClient
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import ChatPromptTemplate,HumanMessagePromptTemplate

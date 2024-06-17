@@ -3,11 +3,9 @@
 # Manually managing azure-functions-worker may cause unexpected issues
 
 azure-functions
-openpyxl
 cx_Oracle
 azure-storage-blob==12.20.0
 sendgrid
-python-http-client==3.3.7
 pandas==2.2.2
 langchain==0.1.20
 langchain-community==0.0.38
