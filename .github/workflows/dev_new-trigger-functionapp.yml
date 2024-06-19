@@ -72,6 +72,6 @@ jobs:
           app-name: 'new-trigger-functionapp'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          scm-do-build-during-deployment: true
-          enable-oryx-build: true
+          scm-do-build-during-deployment: false
+          enable-oryx-build: false
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_C9C9D5FCE28C4F40AA710FC6ABE092E1 }}
