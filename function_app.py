@@ -6,8 +6,8 @@ import io
 import base64
 #from sendgrid import SendGridAPIClient
 #from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
-#import config
-import cx_Oracle
+#import cx_Oracle
+import oracledb
 from datetime import datetime,date
 from typing import List
 import pandas as pd
@@ -82,13 +82,13 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
 
             # This can be called at most once per process.
             if instant_client_dir is not None:
-                cx_Oracle.init_oracle_client(lib_dir=instant_client_dir)
+                oracledb.init_oracle_client(lib_dir=instant_client_dir)
 
-            connection = cx_Oracle.connect(user=username, password=password, dsn=dsn)
+            connection = oracledb.connect(user=username, password=password, dsn=dsn)
             logging.info(f"\nConnected successfully!")
             flag = True
 
-    except cx_Oracle.DatabaseError as e:
+    except oracledb.DatabaseError as e:
         logging.info(f"Error connecting to the database: {e}")
 
 
@@ -267,7 +267,7 @@ def BlobTrigger1(myblob: func.InputStream):
         sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
 
 
-        dsn = cx_Oracle.makedsn(
+        dsn = oracledb.makedsn(
             host=os.environ.get("host"),
             port=os.environ.get("port"),
             service_name = os.environ.get("service_name")
