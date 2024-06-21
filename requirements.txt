@@ -3,7 +3,7 @@
 # Manually managing azure-functions-worker may cause unexpected issues
 
 azure-functions
-cx_Oracle
+cx-Oracle
 azure-storage-blob==12.20.0
 sendgrid
 pandas==2.2.2
