@@ -2,7 +2,7 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python project to Azure Function App - new-trigger-functionapp
+name: Build and deploy Python project to Azure Function App - final-function-app1
 
 on:
   push:
@@ -32,14 +32,12 @@ jobs:
           source venv/bin/activate
 
       - name: Install dependencies
-        #run: pip install -r requirements.txt
-        run: pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+        run: pip install -r requirements.txt
 
       # Optional: Add step to run tests here
 
       - name: Zip artifact for deployment
-        #run: zip release.zip ./* -r
-        run: zip release.zip .python_packages ./* -r
+        run: zip release.zip ./* -r
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v3
@@ -69,9 +67,9 @@ jobs:
         uses: Azure/functions-action@v1
         id: deploy-to-function
         with:
-          app-name: 'new-trigger-functionapp'
+          app-name: 'final-function-app1'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          scm-do-build-during-deployment: false
-          enable-oryx-build: false
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_C9C9D5FCE28C4F40AA710FC6ABE092E1 }}
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_C7B96169CD1E41FEA844655FCF51C81E }}
