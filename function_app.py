@@ -21,6 +21,7 @@ from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 import re
 import sys
+import googlemaps
 
 load_dotenv(override=True)
 
@@ -150,6 +151,18 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
         print(f"{e} :Pc Expired Date is not found in Database")
         remarks.append(f"Pc Expired Date is not found in Database")
 
+    gmaps = googlemaps.Client(key='AIzaSyABWbNxid1XB53EErZoaEouLK1Ygj6TU2s')
+    address = parsed.ship_to 
+    result = gmaps.addressvalidation([address], regionCode='US', enableUspsCass=True)
+    print(result)
+
+    if result:
+        validated_address = result['result']['address']
+        print(f"Validated address: {validated_address['formattedAddress']}")
+    else:
+        print("Invalid address or missing information.")
+        remarks.append("Invalid address")
+
     print(remarks)
     cursor.close()
     connection.close()
@@ -253,6 +266,9 @@ def BlobTrigger1(myblob: func.InputStream):
     try:
 
         logging.info(f"Python blob trigger function processed blob"
+                    f"Blob Name: {myblob.name}"
+                    f"Blob Size: {myblob.length} bytes")
+        print("Python blob trigger function processed blob"
                     f"Blob Name: {myblob.name}"
                     f"Blob Size: {myblob.length} bytes")
 
