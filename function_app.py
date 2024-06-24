@@ -37,7 +37,7 @@ parser = PydanticOutputParser(pydantic_object = PurchaseOrder)
 
 
 def document_load_and_parse(temp_pdf_path,prompt,client):
-    logging.info("Document loading from Blob....")
+    print("Document loading from Blob....")
     loader = PyPDFLoader(temp_pdf_path)
     document = loader.load()
     print(document[0].page_content)
@@ -61,13 +61,13 @@ def document_load_and_parse(temp_pdf_path,prompt,client):
     prompt_format = prompt.format_prompt(question = document_query)
     result = client.invoke(prompt_format.to_messages())
     parsed = parser.parse(result.content)
-    logging.info("Parsing Completed....")
-    logging.info(parsed)
+    print("Parsing Completed....")
+    print(parsed)
     return parsed      
 
 def validate_parsed_values_with_database(username,password,dsn,parsed):
     
-    logging.info("Document Validation starts.......")
+    print("Document Validation starts.......")
     global connection
     remarks = []
     global flag 
@@ -86,11 +86,11 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
                 oracledb.init_oracle_client(lib_dir=instant_client_dir)
 
             connection = oracledb.connect(user=username, password=password, dsn=dsn)
-            logging.info(f"\nConnected successfully!")
+            print(f"\nConnected successfully!")
             flag = True
 
     except oracledb.DatabaseError as e:
-        logging.info(f"Error connecting to the database: {e}")
+        print(f"Error connecting to the database: {e}")
 
 
     cursor = connection.cursor()
@@ -105,10 +105,10 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
         i = i.replace(" ", "")
         cursor.execute(part_number_validate,part = i)
         if cursor.fetchone() is None:
-            logging.info(f"Part number {i} is not Valid")
+            print(f"Part number {i} is not Valid")
             remarks.append(f"Part number {i} is not Valid")
         else:
-            logging.info(f"Part number {i} is Valid")
+            print(f"Part number {i} is Valid")
 
 
     comparePONumber = cursor.execute(po_no_validate,value = parsed.po_number)
@@ -151,8 +151,8 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
         print(f"{e} :Pc Expired Date is not found in Database")
         remarks.append(f"Pc Expired Date is not found in Database")
 
-    gmaps = googlemaps.Client(key='AIzaSyABWbNxid1XB53EErZoaEouLK1Ygj6TU2s')
-    address = parsed.ship_to 
+    gmaps = googlemaps.Client(os.environ.get('google_maps_api_key'))
+    address = parsed.ship_to
     result = gmaps.addressvalidation([address], regionCode='US', enableUspsCass=True)
     print(result)
 
@@ -166,25 +166,25 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     print(remarks)
     cursor.close()
     connection.close()
-    logging.info("DB Validation is done....")
+    print("DB Validation is done....")
     return remarks
 
 
 def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed,remarks):
-    logging.info("Creating Excel File with the Validation Errors Info.....")
+    print("Creating Excel File with the Validation Errors Info.....")
     dict_data1 = parsed.dict()
     print(dict_data1)
     
     combined_part_numbers=','.join(parsed.part_numbers)
     dict_data1['part_numbers']=combined_part_numbers
-    logging.info(f"dict_data1...updated,,,:{dict_data1}")
+    print(f"dict_data1...updated,,,:{dict_data1}")
     combined_remarks = ','.join(remarks)
     blob_client = blob_service_client.get_blob_client(container_name,upload_excel_blob_name)
-    logging.info(f"blob client :{blob_client}")
+    print(f"blob client :{blob_client}")
     if blob_client.exists():
         # Download the blob content
         blob_content = blob_client.download_blob()
-        logging.info(f"The file {blob_content} already exists.")
+        print(f"The file {blob_content} already exists.")
         df = pd.read_excel(blob_content.content_as_bytes())
         new_row = dict_data1.copy()
         new_row['Remarks'] = combined_remarks
@@ -196,7 +196,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='Sheet1', index=False)
         xlsx_data = output.getvalue()
-        logging.info(f"The DataFrame has been updated to {xlsx_data}. ")
+        print(f"The DataFrame has been updated to {xlsx_data}. ")
 
     else:
         data1 = pd.DataFrame(dict_data1,index=[0])
@@ -210,23 +210,23 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
             data1.to_excel(writer, sheet_name='Sheet1', index=False)
 
         xlsx_data = output.getvalue()
-        logging.info(f"New DataFrame has been saved to {xlsx_data}.")
+        print(f"New DataFrame has been saved to {xlsx_data}.")
     
     return xlsx_data
         
 
 def upload_excel_blob(blob_service_client,container_name, xlsx_data, upload_excel_blob_name):
-    logging.info("Uploading error Excel to the Blob.....")
+    print("Uploading error Excel to the Blob.....")
     try:
         blob_client = blob_service_client.get_blob_client(container=container_name, blob=upload_excel_blob_name)
         blob_client.upload_blob(xlsx_data, overwrite=True)
         if blob_client.exists:
-            logging.info(f"Uploaded {upload_excel_blob_name} successfully!")
+            print(f"Uploaded {upload_excel_blob_name} successfully!")
         else:
-            logging.info(f"Error uploading {upload_excel_blob_name}")
+            print(f"Error uploading {upload_excel_blob_name}")
 
     except Exception as e:
-        logging.info(f"Error uploading {upload_excel_blob_name}: {e}")
+        print(f"Error uploading {upload_excel_blob_name}: {e}")
 
 # def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
 
@@ -250,13 +250,13 @@ def upload_excel_blob(blob_service_client,container_name, xlsx_data, upload_exce
 #         sg = SendGridAPIClient(api_key=API)
 #         print("sendgrid: email sent to user.")
 #         response = sg.send(message)
-#         logging.info(f"Mail Response: {response}")
-#         logging.info(f"Email sent! Status code: {response.status_code}")
-#         logging.info(response.body)
-#         logging.info(response.headers)
+#         print(f"Mail Response: {response}")
+#         print(f"Email sent! Status code: {response.status_code}")
+#         print(response.body)
+#         print(response.headers)
 #     except Exception as e:
 #         print(f"Exception{e}")
-#     logging.info("email sent status")
+#     print("email sent status")
 
 app = func.FunctionApp()
 
@@ -264,10 +264,6 @@ app = func.FunctionApp()
                                connection="AzureWebJobsStorage") 
 def BlobTrigger1(myblob: func.InputStream):
     try:
-
-        logging.info(f"Python blob trigger function processed blob"
-                    f"Blob Name: {myblob.name}"
-                    f"Blob Size: {myblob.length} bytes")
         print("Python blob trigger function processed blob"
                     f"Blob Name: {myblob.name}"
                     f"Blob Size: {myblob.length} bytes")
@@ -316,14 +312,14 @@ def BlobTrigger1(myblob: func.InputStream):
 
         if blob_client.exists():
             blob_url = blob_client.url
-            logging.info(f"Blob URL: {blob_url}")
+            print(f"Blob URL: {blob_url}")
         else:
-            logging.info(f"Blob '{blob_name}' does not exist.")
+            print(f"Blob '{blob_name}' does not exist.")
 
 
 
         if blob_client.exists():
-            logging.info(f"Blob '{blob_name}' exist.")
+            print(f"Blob '{blob_name}' exist.")
             pdf_data = blob_client.download_blob().readall()
 
             pdf_bytesio = io.BytesIO(pdf_data)
@@ -335,16 +331,16 @@ def BlobTrigger1(myblob: func.InputStream):
                 temp_file.write(pdf_bytesio.getbuffer())
 
             
-            logging.info("Document Parsing starts......")
+            print("Document Parsing starts......")
             parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
             remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
             xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
-            logging.info("uploading excel to blb container starts.....")
+            print("uploading excel to blb container starts.....")
             upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
-            logging.info("sending mail alert ....")
+            print("sending mail alert ....")
             #send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
         else:
             logging(f"Blob '{blob_name}' does not exist.")
     except Exception as e:
-        logging.info(f"Error in code as :{e}")
+        print(f"Error in code as :{e}")
         
