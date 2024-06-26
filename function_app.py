@@ -4,14 +4,12 @@ import os
 import tempfile
 import io
 import base64
-#from sendgrid import SendGridAPIClient
-#from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
-#import cx_Oracle
+# from sendgrid import SendGridAPIClient
+# from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
 import oracledb
 from datetime import datetime,date
 from typing import List
 import pandas as pd
-#import openpyxl
 from azure.storage.blob import BlobServiceClient
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import ChatPromptTemplate,HumanMessagePromptTemplate
@@ -21,7 +19,10 @@ from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 import re
 import sys
+import glob
+import shutil
 import googlemaps
+
 
 load_dotenv(override=True)
 
@@ -119,8 +120,8 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     else:
         print(f"PO number {parsed.po_number} already exists.")
 
-
-    if "BESTWAY" in parsed.freight_acc_no or "Prepay & Add" in parsed.freight_acc_no:
+ #fac is needed when #COLLECT is mentioned
+    if "BESTWAY" in parsed.freight_acc_no or "Prepay & Add" in parsed.freight_acc_no or "Prepay" in parsed.freight_acc_no: #PREPAY to be added 
         print(f"No Validation needed for Freight account number: {parsed.freight_acc_no}")
         remarks.append("No Validation needed for Freight account number")
     elif parsed.freight_acc_no == 'Ship Via/Freight Method Not Found':
@@ -196,7 +197,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='Sheet1', index=False)
         xlsx_data = output.getvalue()
-        print(f"The DataFrame has been updated to {xlsx_data}. ")
+        #print(f"The DataFrame has been updated to {xlsx_data}. ")
 
     else:
         data1 = pd.DataFrame(dict_data1,index=[0])
@@ -264,6 +265,9 @@ app = func.FunctionApp()
                                connection="AzureWebJobsStorage") 
 def BlobTrigger1(myblob: func.InputStream):
     try:
+        logging.info(f"Python blob trigger function processed blob"
+                    f"Blob Name: {myblob.name}"
+                    f"Blob Size: {myblob.length} bytes")
         print("Python blob trigger function processed blob"
                     f"Blob Name: {myblob.name}"
                     f"Blob Size: {myblob.length} bytes")
@@ -277,13 +281,16 @@ def BlobTrigger1(myblob: func.InputStream):
         password = os.environ.get("password")
         upload_excel_blob_name = "status_excel_"+str(date.today())+".xlsx"
         sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
+        dest_container_name = os.environ.get("DEST_CONTAINER_NAME")
 
-
+        print("loading dsn for oracle db.....!")
         dsn = oracledb.makedsn(
             host=os.environ.get("host"),
             port=os.environ.get("port"),
             service_name = os.environ.get("service_name")
         )
+
+        print("ChatPromptTemplate.....!")
 
         prompt = ChatPromptTemplate(
         messages=[
@@ -306,9 +313,12 @@ def BlobTrigger1(myblob: func.InputStream):
 
         # Create a BlobServiceClient
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-
+        container_client = blob_service_client.get_container_client(container_name)
         # Get a BlobClient for your blob
         blob_client = blob_service_client.get_blob_client(container_name,blob_name)
+
+        # Get a Destination BlobClient for your blob
+        destination_blob_client = blob_service_client.get_blob_client(dest_container_name,blob_name)
 
         if blob_client.exists():
             blob_url = blob_client.url
@@ -316,31 +326,49 @@ def BlobTrigger1(myblob: func.InputStream):
         else:
             print(f"Blob '{blob_name}' does not exist.")
 
+        print("Creating a temp directory")
+        temp_dir = tempfile.mkdtemp()
+        # Iterate through each blob in the container
+        processed_files = set() 
+        for blob in container_client.list_blobs():
+            print("blobs inside for ...."+blob.name)
 
+            blob_client1 = container_client.get_blob_client(blob.name)
+            blob_data = blob_client1.download_blob()
+            # Construct a unique file path in the temp_dir using the blob's name
+            file_name = os.path.join(temp_dir, blob.name)
+            print(f":::::::::file_path ::::::::::::::::..",file_name)
+            # Save the blob's content to the local file
+            with open(file_name, "wb") as file:
+               file.write(blob_data.readall())
+            print(f"Downloaded blob: {blob.name} to {file_name}")
 
-        if blob_client.exists():
-            print(f"Blob '{blob_name}' exist.")
-            pdf_data = blob_client.download_blob().readall()
+            print("All files downloaded and saved in temp_dir:", temp_dir)  
+            # Iterate over PDF files in the specified directory
+        for temp_pdf_path in glob.glob(os.path.join(temp_dir, "*")):
+            print(f"processed files set : {processed_files}")
+            if temp_pdf_path in processed_files:
+                    continue
+            else:
+                if temp_pdf_path.endswith(".pdf"):
+                    print("temp_pdf_path = "+temp_pdf_path)
+                    print("Document Parsing starts......")
+                    parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
+                    remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
+                    xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
+                    print("uploading excel to blob container starts.....")
+                    upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
+            if temp_pdf_path.endswith('.pdf'):        
+                blob_to_move = container_client.get_blob_client(os.path.basename(temp_pdf_path))
+                destination_blob_client.start_copy_from_url(blob_to_move.url)
+                blob_to_move.delete_blob()
+                print(f"Blob '{blob_name}' moved from '{container_name}' to '{dest_container_name}'")
+            processed_files.add(temp_pdf_path)
+        print("sending mail alert ....")
+        #send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
+                    
+        shutil.rmtree(temp_dir)  # Remove the temporary directory and its contents
 
-            pdf_bytesio = io.BytesIO(pdf_data)
-
-            # Create a temp folder and save the BytesIO object
-            temp_dir = tempfile.mkdtemp()
-            temp_pdf_path = os.path.join(temp_dir, 'temp.pdf')
-            with open(temp_pdf_path, 'wb') as temp_file:
-                temp_file.write(pdf_bytesio.getbuffer())
-
-            
-            print("Document Parsing starts......")
-            parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
-            remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
-            xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
-            print("uploading excel to blb container starts.....")
-            upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
-            print("sending mail alert ....")
-            #send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
-        else:
-            logging(f"Blob '{blob_name}' does not exist.")
     except Exception as e:
         print(f"Error in code as :{e}")
         
