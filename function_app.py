@@ -265,12 +265,11 @@ app = func.FunctionApp()
                                connection="AzureWebJobsStorage") 
 def BlobTrigger1(myblob: func.InputStream):
     try:
-        logging.info(f"Python blob trigger function processed blob"
-                    f"Blob Name: {myblob.name}"
-                    f"Blob Size: {myblob.length} bytes")
-        print("Python blob trigger function processed blob"
-                    f"Blob Name: {myblob.name}"
-                    f"Blob Size: {myblob.length} bytes")
+        logging.info("Python blob trigger function processed blob Blob Name:", myblob.name)
+        print("Python blob trigger function processed blob Blob Name:", myblob.name)
+        # print("Python blob trigger function processed blob"
+        #             f"Blob Name: {myblob.name}"
+        #             f"Blob Size: {myblob.length} bytes")
 
         connection_string = os.environ.get("STORAGE_ACCOUNT_CONNECTION_STRING")
         container_name = os.environ.get("CONTAINER_NAME")
@@ -322,9 +321,9 @@ def BlobTrigger1(myblob: func.InputStream):
 
         if blob_client.exists():
             blob_url = blob_client.url
-            print(f"Blob URL: {blob_url}")
+            print("Blob URL: ", blob_url)
         else:
-            print(f"Blob '{blob_name}' does not exist.")
+            print("Blob does not exist.", blob_name)
 
         print("Creating a temp directory")
         temp_dir = tempfile.mkdtemp()
