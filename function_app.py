@@ -4,8 +4,8 @@ import os
 import tempfile
 import io
 import base64
-# from sendgrid import SendGridAPIClient
-# from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import (Mail, Attachment, FileContent, FileName, FileType, Disposition)
 import oracledb
 from datetime import datetime,date
 from typing import List
@@ -28,7 +28,7 @@ load_dotenv(override=True)
 
 class PurchaseOrder(BaseModel):
     po_number: str = Field(description="Purchase Order Number")
-    ship_to: str = Field(description="Shipping Address")
+    ship_to: str = Field(description="Ship To Address")
     freight_acc_no: str = Field(description="Ship Via Method Number.")
     pc_no: str = Field(description="PC Number")
     part_numbers: List[str] = Field(description= "Item Numbers")
@@ -39,6 +39,7 @@ parser = PydanticOutputParser(pydantic_object = PurchaseOrder)
 
 def document_load_and_parse(temp_pdf_path,prompt,client):
     print("Document loading from Blob....")
+    print("pdf path :", temp_pdf_path)
     loader = PyPDFLoader(temp_pdf_path)
     document = loader.load()
     print(document[0].page_content)
@@ -46,17 +47,18 @@ def document_load_and_parse(temp_pdf_path,prompt,client):
     document_query =  """Extract the values of PO Number, Ship To address, Ship Via method, PC Number and part Numbers.
     PC numbers will be mentioned as PC Number. Please note that some documents 
     might not have a PC Number mentioned, in that case assign value as 'PC number not Found'.
+    Freight account number is mentioned inside the Ship Via method label/column.
     Please note that some documents might not have The Ship Via method mention, 
     in that  case assign value as Freight Method Not Found.
+    PO Numbers can be mentioned as Order Numbers as well. 
+    Do not consider Customer PO, only consider Purchase Order PO
     While extracting Part Numbers,if part number is mentioned after the term 'Zebra', consider ONLY that preceeding string to be the actual Part Number.
     Part numbers format examples: 
-    521-678 (Not an actual part number)
     SE2707-LU000R (Actual Part Number format)
     AFT-SYG-FGH (Actual Part Number format)
     Special cases to extract Part Numbers/Item number:
     For example, the actual part number is ABC-2HG3-IOX but the part of the string can be present as ABC-2HG3- in the first line and rest IOX in the immediate next line.
-       In that case, consider the whole string as the part number without separating it as two part numbers. 
-    In case, no part numbers is found as per requirement, assign value as 'Part Number Not found'
+    In that case, consider the whole string as the part number without separating it into two part numbers. 
     """+ document[0].page_content
 
     prompt_format = prompt.format_prompt(question = document_query)
@@ -124,9 +126,21 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     if "BESTWAY" in parsed.freight_acc_no or "Prepay & Add" in parsed.freight_acc_no or "Prepay" in parsed.freight_acc_no: #PREPAY to be added 
         print(f"No Validation needed for Freight account number: {parsed.freight_acc_no}")
         remarks.append("No Validation needed for Freight account number")
-    elif parsed.freight_acc_no == 'Ship Via/Freight Method Not Found':
+    elif parsed.freight_acc_no == 'Freight Method Not Found':
         print(f"Freight Account Number not found")
         remarks.append("Freight Account Number not found") 
+    # elif "COLLECT" in parsed.freight_acc_no:
+    #     freight_method = re.findall("\D", parsed.freight_acc_no)#contains No Digits
+    #     freight_account_number = re.findall("\d",  parsed.freight_acc_no)#contains only digits
+    #     print(''.join(freight_method))
+    #     print("Printing freight account number ........:"+''.join(freight_account_number))
+
+    #     if  freight_method and not freight_account_number:
+    #         remarks.append(f"Freight account number is missing for Freight method - {''.join(freight_method)}")
+    #         print(f"Freight account number is missing for {''.join(freight_method)}")
+    #     else:
+    #         print(f"Freight Account Number is present")
+
     else:
         freight_method = re.findall("\D", parsed.freight_acc_no)#contains No Digits
         freight_account_number = re.findall("\d",  parsed.freight_acc_no)#contains only digits
@@ -141,6 +155,7 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
 
     comparePcNumber = cursor.execute(expired_pc,value = parsed.pc_no)
     cursor_fetchone_pc = cursor.fetchone()
+    flag_pc = False
     try: 
         if datetime.now() > cursor_fetchone_pc[0]: 
             print(f"PC number {parsed.pc_no} is expired")
@@ -149,20 +164,25 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
             print(f"PC number {parsed.pc_no} is not expired")
         
     except Exception as e:
-        print(f"{e} :Pc Expired Date is not found in Database")
-        remarks.append(f"Pc Expired Date is not found in Database")
+        flag_pc = True
+    
+    if flag_pc==True:
+        print(f"Pc Expired Date is not found in Database")
+        #remarks.append(f"Pc Expired Date is not found in Database")
 
     gmaps = googlemaps.Client(os.environ.get('google_maps_api_key'))
     address = parsed.ship_to
     result = gmaps.addressvalidation([address], regionCode='US', enableUspsCass=True)
-    print(result)
+    #print(result)
+    validated_address = result['result']['address']
 
-    if result:
-        validated_address = result['result']['address']
-        print(f"Validated address: {validated_address['formattedAddress']}")
+    if validated_address==address:
+        #validated_address = result['result']['address']
+        print("Address is Valid")
+        
     else:
-        print("Invalid address or missing information.")
-        remarks.append("Invalid address")
+        print(f"Recommended address: {validated_address['formattedAddress']}")
+        remarks.append(f"Recommended address: {validated_address['formattedAddress']}")
 
     print(remarks)
     cursor.close()
@@ -187,10 +207,16 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
         blob_content = blob_client.download_blob()
         print(f"The file {blob_content} already exists.")
         df = pd.read_excel(blob_content.content_as_bytes())
-        new_row = dict_data1.copy()
-        new_row['Remarks'] = combined_remarks
-        new_row['Sl. No.'] = len(df) + 1
-        df = df._append(new_row, ignore_index=True)
+        print("df .....:", df)
+        # new_row = dict_data1.copy()
+        # new_row['Remarks'] = combined_remarks
+        # new_row['Sl. No.'] = len(df) + 1
+
+        dict_data1['Remarks'] = combined_remarks
+        dict_data1['Sl. No.'] = len(df) + 1
+        print("demo dict_data1 : ",dict_data1)
+        df = df._append(dict_data1, ignore_index=True)
+        print("new_row appended to df   :", df)
 
         # Save the modified data to a new Excel file
         output = io.BytesIO()
@@ -211,7 +237,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
             data1.to_excel(writer, sheet_name='Sheet1', index=False)
 
         xlsx_data = output.getvalue()
-        print(f"New DataFrame has been saved to {xlsx_data}.")
+        #print(f"New DataFrame has been saved to {xlsx_data}.")
     
     return xlsx_data
         
@@ -229,35 +255,35 @@ def upload_excel_blob(blob_service_client,container_name, xlsx_data, upload_exce
     except Exception as e:
         print(f"Error uploading {upload_excel_blob_name}: {e}")
 
-# def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
+def send_alert_mail_using_sendgrid(API,upload_excel_blob_name,xlsx_data):
 
-#     message = Mail(
-#         from_email = os.environ.get("FROM"),
-#         to_emails = os.environ.get("TO"),
-#         subject = "ZEBRA OM GENAI PO Parser Alert Email",
-#         html_content = "Alert Mail with Excel Sheet is sent Successfully!" 
-#     )
+    message = Mail(
+        from_email = os.environ.get("FROM"),
+        to_emails = os.environ.get("TO"),
+        subject = "ZEBRA OM GENAI PO Parser Alert Email",
+        html_content = "Alert Mail with Excel Sheet is sent Successfully!" 
+    )
     
-#     encoded_file = base64.b64encode(xlsx_data).decode()
+    encoded_file = base64.b64encode(xlsx_data).decode()
 
-#     attachedFile = Attachment(
-#         FileContent(encoded_file),
-#         FileName(upload_excel_blob_name),
-#         FileType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-#         Disposition('attachment')
-#     )
-#     message.attachment = attachedFile
-#     try:
-#         sg = SendGridAPIClient(api_key=API)
-#         print("sendgrid: email sent to user.")
-#         response = sg.send(message)
-#         print(f"Mail Response: {response}")
-#         print(f"Email sent! Status code: {response.status_code}")
-#         print(response.body)
-#         print(response.headers)
-#     except Exception as e:
-#         print(f"Exception{e}")
-#     print("email sent status")
+    attachedFile = Attachment(
+        FileContent(encoded_file),
+        FileName(upload_excel_blob_name),
+        FileType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+        Disposition('attachment')
+    )
+    message.attachment = attachedFile
+    try:
+        sg = SendGridAPIClient(api_key=API)
+        print("sendgrid: email sent to user.")
+        response = sg.send(message)
+        print(f"Mail Response: {response}")
+        print(f"Email sent! Status code: {response.status_code}")
+        print(response.body)
+        print(response.headers)
+    except Exception as e:
+        print(f"Exception{e}")
+    print("email sent status")
 
 app = func.FunctionApp()
 
@@ -265,11 +291,11 @@ app = func.FunctionApp()
                                connection="AzureWebJobsStorage") 
 def BlobTrigger1(myblob: func.InputStream):
     try:
-        logging.info("Python blob trigger function processed blob Blob Name:", myblob.name)
-        print("Python blob trigger function processed blob Blob Name:", myblob.name)
-        # print("Python blob trigger function processed blob"
-        #             f"Blob Name: {myblob.name}"
-        #             f"Blob Size: {myblob.length} bytes")
+        # logging.info(f"Python blob trigger function processed blob Blob Name:", myblob.name)
+        # print(f"Python blob trigger function processed blob Blob Name:", myblob.name)
+        print("Python blob trigger function processed blob"
+                    f"Blob Name: {myblob.name}"
+                    f"Blob Size: {myblob.length} bytes")
 
         connection_string = os.environ.get("STORAGE_ACCOUNT_CONNECTION_STRING")
         container_name = os.environ.get("CONTAINER_NAME")
@@ -316,14 +342,11 @@ def BlobTrigger1(myblob: func.InputStream):
         # Get a BlobClient for your blob
         blob_client = blob_service_client.get_blob_client(container_name,blob_name)
 
-        # Get a Destination BlobClient for your blob
-        destination_blob_client = blob_service_client.get_blob_client(dest_container_name,blob_name)
-
-        if blob_client.exists():
-            blob_url = blob_client.url
-            print("Blob URL: ", blob_url)
-        else:
-            print("Blob does not exist.", blob_name)
+        # if blob_client.exists():
+        #     blob_url = blob_client.url
+        #     print("Blob URL: ", blob_url)
+        # else:
+        #     print("Blob does not exist.", blob_name)
 
         print("Creating a temp directory")
         temp_dir = tempfile.mkdtemp()
@@ -357,15 +380,42 @@ def BlobTrigger1(myblob: func.InputStream):
                     xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
                     print("uploading excel to blob container starts.....")
                     upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
-            if temp_pdf_path.endswith('.pdf'):        
-                blob_to_move = container_client.get_blob_client(os.path.basename(temp_pdf_path))
+                    print(os.path.basename(temp_pdf_path))
+            if temp_pdf_path.endswith('.pdf'): 
+                blob_to_move = blob_service_client.get_blob_client(container=container_name, blob=os.path.basename(temp_pdf_path))       
+                # Get a Destination BlobClient for your blob
+                destination_blob_client = blob_service_client.get_blob_client(container=dest_container_name,blob=os.path.basename(temp_pdf_path))
                 destination_blob_client.start_copy_from_url(blob_to_move.url)
                 blob_to_move.delete_blob()
                 print(f"Blob '{blob_name}' moved from '{container_name}' to '{dest_container_name}'")
             processed_files.add(temp_pdf_path)
         print("sending mail alert ....")
-        #send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
-                    
+        send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)
+
+        # count = 0
+        # for temp_pdf_path in glob.glob(os.path.join(temp_dir, "*")):
+        #     print("temp_pdf_path : ", temp_pdf_path)
+        #     #if temp_pdf_path not in processed_files and temp_pdf_path.endswith(".pdf"):
+        #     if temp_pdf_path.endswith(".pdf"):
+        #         count=count+1
+        #         print("Document Parsing starts......")
+        #         parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
+        #         remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
+        #         xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
+        #         print("uploading excel to blb container starts.....")
+        #         upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
+        #         #processed_files.add(temp_pdf_path)
+        #         #os.remove(temp_pdf_path)
+        # print("count of for loop is :", count)    
+        # print("sending mail alert ....")
+        # send_alert_mail_using_sendgrid(sendgrid_api_key,upload_excel_blob_name,xlsx_data)   
+                
+        # for temp_pdf_path in glob.glob(os.path.join(temp_dir, "*")): 
+        #     if temp_pdf_path.endswith(".pdf"): 
+        #         blob_to_move = container_client.get_blob_client(os.path.basename(temp_pdf_path))
+        #         destination_blob_client.start_copy_from_url(blob_to_move.url)
+        #         blob_to_move.delete_blob()
+        #         print(f"Blob '{blob_name}' moved from '{container_name}' to '{dest_container_name}'")
         shutil.rmtree(temp_dir)  # Remove the temporary directory and its contents
 
     except Exception as e:
