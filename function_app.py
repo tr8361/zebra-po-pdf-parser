@@ -33,11 +33,10 @@ class PurchaseOrder(BaseModel):
     pc_no: str = Field(description="PC Number")
     part_numbers: List[str] = Field(description= "Item Numbers")
 
-parser = PydanticOutputParser(pydantic_object = PurchaseOrder)
 
 
 
-def document_load_and_parse(temp_pdf_path,prompt,client):
+def document_load_and_parse(temp_pdf_path,prompt,client,parser):
     print("Document loading from Blob....")
     print("pdf path :", temp_pdf_path)
     loader = PyPDFLoader(temp_pdf_path)
@@ -73,6 +72,7 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     print("Document Validation starts.......")
     global connection
     remarks = []
+    correct_remarks = []
     global flag 
     flag = False
     try:        
@@ -112,23 +112,25 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
             remarks.append(f"Part number {i} is not Valid")
         else:
             print(f"Part number {i} is Valid")
+            correct_remarks.append(f"Part number {i} is Valid")
 
 
     comparePONumber = cursor.execute(po_no_validate,value = parsed.po_number)
     cursor_fetchone = cursor.fetchone()
     if cursor_fetchone is None:
         print(f"PO number: {parsed.po_number} is new & should be processed further")
-        remarks.append(f"PO number {parsed.po_number} is new and should be processed further.")
+        remarks.append(f"\nPO number {parsed.po_number} is new and should be processed further.")
     else:
         print(f"PO number {parsed.po_number} already exists.")
+        correct_remarks.append(f"\nPO number {parsed.po_number} already exists.")
 
  #fac is needed when #COLLECT is mentioned
     if "BESTWAY" in parsed.freight_acc_no or "Prepay & Add" in parsed.freight_acc_no or "Prepay" in parsed.freight_acc_no: #PREPAY to be added 
         print(f"No Validation needed for Freight account number: {parsed.freight_acc_no}")
-        remarks.append("No Validation needed for Freight account number")
+        correct_remarks.append("\nNo Validation needed for Freight account number")
     elif parsed.freight_acc_no == 'Freight Method Not Found':
         print(f"Freight Account Number not found")
-        remarks.append("Freight Account Number not found") 
+        remarks.append("\nFreight Account Number not found") 
     # elif "COLLECT" in parsed.freight_acc_no:
     #     freight_method = re.findall("\D", parsed.freight_acc_no)#contains No Digits
     #     freight_account_number = re.findall("\d",  parsed.freight_acc_no)#contains only digits
@@ -149,9 +151,10 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
 
         if  freight_method and not freight_account_number:
             remarks.append(f"Freight account number is missing for Freight method - {''.join(freight_method)}")
-            print(f"Freight account number is missing for {''.join(freight_method)}")
+            print(f"\nFreight account number is missing for {''.join(freight_method)}")
         else:
             print(f"Freight Account Number is present")
+            correct_remarks.append(f"\nFreight Account Number is present")
 
     comparePcNumber = cursor.execute(expired_pc,value = parsed.pc_no)
     cursor_fetchone_pc = cursor.fetchone()
@@ -159,16 +162,18 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     try: 
         if datetime.now() > cursor_fetchone_pc[0]: 
             print(f"PC number {parsed.pc_no} is expired")
-            remarks.append(f"PC number {parsed.pc_no} is expired")
+            remarks.append(f"\nPC number {parsed.pc_no} is expired")
         else:
             print(f"PC number {parsed.pc_no} is not expired")
+            correct_remarks.append(f"\nPC number {parsed.pc_no} is not expired")
         
     except Exception as e:
         flag_pc = True
     
     if flag_pc==True:
-        print(f"Pc Expired Date is not found in Database")
-        #remarks.append(f"Pc Expired Date is not found in Database")
+        print(f"Pc Expired Date is not found in PO")
+        correct_remarks.append(f"\nPc Expired Date is not found in PO\n")
+
 
     gmaps = googlemaps.Client(os.environ.get('google_maps_api_key'))
     address = parsed.ship_to
@@ -179,19 +184,20 @@ def validate_parsed_values_with_database(username,password,dsn,parsed):
     if validated_address==address:
         #validated_address = result['result']['address']
         print("Address is Valid")
+        correct_remarks.append("\nAddress is valid.")
         
     else:
         print(f"Recommended address: {validated_address['formattedAddress']}")
-        remarks.append(f"Recommended address: {validated_address['formattedAddress']}")
+        remarks.append(f"\nRecommended address: {validated_address['formattedAddress']}")
 
     print(remarks)
     cursor.close()
     connection.close()
     print("DB Validation is done....")
-    return remarks
+    return remarks,correct_remarks
 
 
-def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed,remarks):
+def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed,remarks,correct_remarks):
     print("Creating Excel File with the Validation Errors Info.....")
     dict_data1 = parsed.dict()
     print(dict_data1)
@@ -200,6 +206,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
     dict_data1['part_numbers']=combined_part_numbers
     print(f"dict_data1...updated,,,:{dict_data1}")
     combined_remarks = ','.join(remarks)
+    combined_correct_remarks = ','.join(correct_remarks)
     blob_client = blob_service_client.get_blob_client(container_name,upload_excel_blob_name)
     print(f"blob client :{blob_client}")
     if blob_client.exists():
@@ -213,6 +220,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
         # new_row['Sl. No.'] = len(df) + 1
 
         dict_data1['Remarks'] = combined_remarks
+        dict_data1['Correct_Remarks'] = combined_correct_remarks
         dict_data1['Sl. No.'] = len(df) + 1
         print("demo dict_data1 : ",dict_data1)
         df = df._append(dict_data1, ignore_index=True)
@@ -228,6 +236,7 @@ def create_excel_file(blob_service_client,container_name,upload_excel_blob_name,
     else:
         data1 = pd.DataFrame(dict_data1,index=[0])
         data1['Remarks'] = combined_remarks
+        data1['Correct_Remarks'] = combined_correct_remarks
         data1.insert(0, 'Sl. No.', range(1, 1 + len(data1)))
         print("printing data1..... ")
         print(data1)
@@ -316,7 +325,7 @@ def BlobTrigger1(myblob: func.InputStream):
         )
 
         print("ChatPromptTemplate.....!")
-
+        parser = PydanticOutputParser(pydantic_object = PurchaseOrder)
         prompt = ChatPromptTemplate(
         messages=[
             HumanMessagePromptTemplate.from_template("answer the user questions as best as possible.\n{format_instructions}\n{question}"
@@ -375,9 +384,10 @@ def BlobTrigger1(myblob: func.InputStream):
                 if temp_pdf_path.endswith(".pdf"):
                     print("temp_pdf_path = "+temp_pdf_path)
                     print("Document Parsing starts......")
-                    parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client)
-                    remarks_list = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
-                    xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_list)
+                    parsed_return_value  = document_load_and_parse(temp_pdf_path,prompt,client,parser)
+                    remarks_tuple = validate_parsed_values_with_database(username,password,dsn,parsed_return_value)
+                    print("remarks tuple :", remarks_tuple)
+                    xlsx_data = create_excel_file(blob_service_client,container_name,upload_excel_blob_name,parsed_return_value,remarks_tuple[0],remarks_tuple[1])
                     print("uploading excel to blob container starts.....")
                     upload_excel_blob(blob_service_client, container_name, xlsx_data, upload_excel_blob_name)
                     print(os.path.basename(temp_pdf_path))
